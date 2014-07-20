@@ -9,13 +9,15 @@ import site
 from shutil import copyfile, move
 from tempfile import NamedTemporaryFile
 
-a_settings = {
+__defined_settings = {
 'PROJECT_NAME':'printerinstaller',
 'GIT-REPO':'https://github.com/eahrold/printerinstaller-server.git',
 'GIT-BRANCH':'master',
-'MODIFIED-SETTINGS':[
-                    
-                    ],
+'APACHE_SUBPATH':'printers',
+
+'MODIFIED-SETTINGS':{ 
+    
+},
 }
 
 class VirtualEnvError(Exception):
@@ -86,29 +88,37 @@ class VirtualEnv(object):
                     pip_cmd.append(requirements)
                 else:
                     raise VirtualEnvError("Error: Requirements not properly specified!")
-
-                    
+          
             subprocess.check_call(pip_cmd)
         except ValueError:
             print "A valid requirements file was not found"
         except subprocess.CalledProcessError:
             pass     
 
-class DjangoSettings(object):
+class DjangoInstallSettings(object):
+    __isosxserver = True if os.path.exists('/Applications/Server.app') else False
+
     def __init__(self,project_name,defaults={}): 
+        self.virtualenv_path = None
+
         self.project_name = defaults.get('PROJECT_NAME',project_name)
         self.project_dirname = defaults.get('PROJECT_DIRNAME',project_name)
         self.settings_dirname = defaults.get('SETTINGS_DIRNAME',project_name)
 
-        self.user = defaults.get('USER_NAME',project_name)
-        self.group = defaults.get('GROUP_NAME',project_name)
+        self.process_user = defaults.get('PROCESS_USER',project_name)
+        self.process_group = defaults.get('PROCESS_GROUP',project_name)
 
+        self.admin_name = 'admin'
+        self.user_email = 'admin@example.com'
+        self.user_pass  = 'password'
+
+        self.run_on_subpath = False
+        self.apache_subpath = defaults.get('APACHE_SUBPATH',project_name)
         self.run_on_osxserver = True
-        self.virtualenv_path = None
+
         self.__requirements = defaults.get('REQUIREMENTS',os.path.join('setup','requirements.txt'))
 
         self.git_repo = defaults.get('GIT-REPO',None)
-        print 'using repo %s' % self.git_repo
         self.git_branch = defaults.get('GIT-BRANCH','master')
 
         if not self.git_repo:
@@ -142,8 +152,7 @@ class DjangoSettings(object):
     def requirements(self, value):
         self.__requirements = value
 
-
-    def question(self,message,type=str,default={},require=False,values=[]):
+    def question(self,message,type=str,default={},require=True,values=[]):
         c = Colored
         while True:
             prompt = message
@@ -177,7 +186,7 @@ class DjangoSettings(object):
                 except ValueError:
                     c.echo("please choose form these values %s" % values ,'alert')
             else:  # type is string
-                if not ret == '':
+                if not ret == '' and require:
                     break
                 elif default:
                     ret = default
@@ -186,28 +195,37 @@ class DjangoSettings(object):
         return ret
 
 
-    def prompt(self,venv_only=False):
-        webDataLocal = '/usr/local/www'
-        if os.path.exists('/Applications/Server.app'):
-            webDataLocal = Util.serveradmin('web','dataLocation')
+    def prompt(self):
+        webDataLocal = Util.serveradmin('web','dataLocation') if self.__isosxserver else '/usr/local/www'
 
-        if not self.virtualenv_path:
-            self.virtualenv_path = self.question('Where should we install the Virtual Environment',file,webDataLocal,True)
-            if venv_only:return
-        
-        c = Colored
-        c.echo("[1] www user" "(if you plan to run on both http(80) and https(443))",'purple')
-        c.echo("[2] create a user %s and group %s" % (self.user,self.group),'purple')  
-        resp = self.question('Please Choose',int,None,False,[1,2])
-        if not resp == 1:
-            self.user = 'www'
-            self.group = 'www'
-
-        if os.path.exists('/Applications/Server.app'):
-            self.run_on_osxserver = self.question('Do you want to run as OSX WebApp',bool)
-        
+        self.virtualenv_path = self.question('Where should we install the Virtual Environment',file,webDataLocal,True)
         
         # self.question('  Confirm install path :%s' % self.virtualenv_path ,bool)
+
+        c = Colored
+        c.echo("[1] www user" "(if you plan to run on both http(80) and https(443))",'purple')
+        c.echo("[2] create a user %s and group %s" % (self.process_user,self.process_group),'purple')  
+        resp = self.question('Please Choose',int,None,False,[1,2])
+        if not resp == 1:
+            self.process_user = 'www'
+            self.process_group = 'www'
+
+        if self.__isosxserver:
+            self.run_on_osxserver = self.question('Do you want to run as OSX WebApp',bool)
+        
+        self.run_on_subpath = self.question('Would you like to run on the subpath "/%s"' % self.apache_subpath ,bool)
+        
+        # from getpass import getpass
+        # self.admin_name = self.question('Enter the username for the Apps superuser',str)
+        # self.user_email = self.question('email address',str)
+
+        # while True:
+        #     self.user_pass = getpass('Password:')
+        #     confirm = getpass('Confirm Password:')
+        #     if not self.user_pass == confirm:
+        #         print "Passwords did not match:"
+        #     else:
+        #         break
 
 class DjangoAppError(Exception):
     '''Exception to throw if a DjangoApp process fails'''
@@ -218,20 +236,13 @@ class DjangoApp(object):
         if not isinstance(virtualenv, VirtualEnv):
              raise TypeError("Not a virtual environment")
         
-        if not isinstance(app_settings, DjangoSettings):
+        if not isinstance(app_settings, DjangoInstallSettings):
              raise TypeError("Not a Settings object")
 
         self.settings = app_settings
         self.virtualenv = virtualenv       
         self.name = self.settings.project_name
-        self.__manage = os.path.join(self.settings.project_dir,'manage.py')
-        self.dj_settings = None
         
-        # Use site to load the site-packages directory of our virtualenv
-        site.addsitedir(os.path.join(self.settings.virtualenv_dir, 'lib/python2.7/site-packages'))
-
-        # Make sure we have the virtualenv and the Django app itself added to our path
-        sys.path.append(self.settings.virtualenv_dir)
         sys.path.append(self.settings.project_dir)
         os.environ.setdefault('DJANGO_SETTINGS_MODULE', '%s.settings' % self.name)
         
@@ -266,41 +277,32 @@ class DjangoApp(object):
 
         self.virtualenv.install_packages(self.settings.requirements)
         self.configure()
-        self.manage(['syncdb'])
-        # self.superUser2()
-        self.manage(['migrate'])
-        self.manage(['collectstatic','--noinput'])
 
+        # now that everything is installed and configured
+        # we should be able to import things
+        from django.core.management import call_command
+        from django.contrib.auth.models import User
 
-    def superUser(self):
-        command = 'echo "from django.contrib.auth.models import User; User.objects.create_superuser(\'%s\', \'%s\', \'%s\')" | %s %s shell' % (self.virtualenv.python,self.__manage)
-        print command
-        try:
-            subprocess.check_call(command,shell=True)
-        except subprocess.CalledProcessError as e:
-            print e
+        call_command('syncdb', interactive=False)
+        call_command('migrate')
+        call_command('collectstatic',interactive=False)
+        self.superuser_command()
 
-    def manage(self,args=[]):
-        proc_args = [self.virtualenv.python,self.__manage]
-        proc_args.extend(args)
-        command = " ".join(proc_args)
-        try:
-            return subprocess.check_output(command,shell=True)
-        except subprocess.CalledProcessError as e:
-            print e
+    def superuser_command(self):
+        from django.contrib.auth.models import User
+        User.objects.create_superuser(self.settings.admin_name, self.settings.user_email, self.settings.user_pass)
 
     def get_dj_setting(self,key):
         from printerinstaller import settings
-        print 'using settings module'
         return getattr(settings,key,None)
 
     def configure(self):
         '''handle the locating and manipulating of the settings.py file'''
         settings_template = None
-        print self.media_root
-        print self.media_url
-        print self.static_root
-        print self.static_url
+        # print self.media_root
+        # print self.media_url
+        # print self.static_root
+        # print self.static_url
 
         search_for = os.path.join(self.settings.settings_dir,'*settings*.py')
 
@@ -338,15 +340,15 @@ class FileConfig(object):
         with open(self.file,'w') as f:
             f.write(tmp_file_string)
 
-    def edit_settings(self,settings):
+    def edit_settings(self,settings={}):
         # open the file and get it into memory
         with open(self.file,'r') as f:
             for line in f:
                 self.__file_array.append(line)
 
         # modify all the settings you wish to here
-        self.setting_replace('TEST',"One Last Check")
-        self.setting_replace('BRIDGE',"Before the night is over!")
+        for key, value in settings.iteritems():
+            self.setting_replace(key,value)
 
         # finish up and write out to the file
         self.write("")
@@ -401,6 +403,55 @@ class Util:
             pass
         return default_path
 
+    @classmethod
+    def create_process_user_and_group(Util,process_user,process_group):
+        __user_kind = '__user_kind'
+        __group_kind = '__group_kind'
+        def dscl(args):
+            __dscl = ['dscl','.']
+            __dscl.extend(args)
+            return subprocess.check_output(__dscl)
+        def get_valid_id(kind):
+            vid = 400
+            if kind == Util.__user_kind:
+                vids = dscl('list /Groups PrimaryGroupID'.split()).split('\n')
+            else:
+                vids = dscl('list /Groups PrimaryGroupID'.split()).split('\n')
+            arr = []
+            for i in vids:
+                x = i.split()
+                if x: arr.append(x[1])
+
+            while vid < 500:
+                if str(vid) in arr:
+                    vid += 1
+                else:
+                    return vid
+            
+            return None
+
+        def check_if_exists(name,kind):
+            if not kind in [__user_kind,__group_kind]: raise ValueError("incorrect spec")
+            import pwd,grp
+            if kind == Util.__user_kind:
+                cmd = pwd.getpwnam
+            else:
+                cmd = grp.getgrnam
+
+        if not check_if_exists(process_user,Util.__user_kind):
+            uid = get_valid_id(Util.__user_kind)
+
+        def check_if_exists(name,kind):
+            if not kind in [__user_kind,__group_kind]: raise ValueError("incorrect spec")
+            import pwd,grp
+            if kind == __user_kind:
+                cmd = pwd.getpwnam
+            else:
+                cmd = grp.getgrnam
+
+        if check_if_exists(process_user,'user'):
+            uid = get_valid_id('user')
+            # dscl(['-create','/Users/%s'])
 
 class Colored:
     @classmethod
@@ -442,23 +493,23 @@ class Colored:
 
 
 def main(argv):
-    global a_settings   
-    app_settings = DjangoSettings(a_settings['PROJECT_NAME'],a_settings)
+    global __defined_settings   
+    install_settings = DjangoInstallSettings(__defined_settings['PROJECT_NAME'],__defined_settings)
 
     c = Colored
-    c.echo("##################################################################",'red')
-    c.echo("##########         django webapp installer            ############",'red')
-    c.echo("##################################################################",'red')
+    c.echo("##########################################################################",'red')
+    c.echo("##############           django webapp installer          ################",'red')
+    c.echo("##########################################################################",'red')
     
-    app_settings.prompt()
-    venv = VirtualEnv(app_settings.virtualenv_path,a_settings['PROJECT_NAME'])
+    install_settings.prompt()
+    venv = VirtualEnv(install_settings.virtualenv_path,__defined_settings['PROJECT_NAME'])
     venv.activate()
     
-    app = DjangoApp(venv,app_settings)
+    app = DjangoApp(venv,install_settings)
     app.install()
 
-    # FileConfig('/tmp/ex.wsgi').write_wsgi2(app_settings)
-    # FileConfig('/tmp/ex.settings.py').edit_settings(app_settings)
+    # FileConfig('/tmp/ex.wsgi').write_wsgi2(install_settings)
+    # FileConfig('/tmp/ex.settings.py').edit_settings(install_settings)
     
 if __name__ == "__main__":
     main(sys.argv)

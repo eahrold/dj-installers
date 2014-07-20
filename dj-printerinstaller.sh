@@ -540,7 +540,7 @@ check_ID(){
             break
         else
             cecho alert "That %2 is in use"
-            read -e -p "Please specify another (press c to cancel auto-install script):" ID
+            read -e -p "Please specify another uid (press c to cancel auto-install script):" ID
         fi
     done
     

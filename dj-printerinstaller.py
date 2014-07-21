@@ -5,6 +5,7 @@ import sys
 import subprocess
 import imp
 import site
+import atexit
 
 from shutil import copyfile, move
 from tempfile import NamedTemporaryFile
@@ -15,9 +16,26 @@ __defined_settings = {
 'GIT-BRANCH':'master',
 'APACHE_SUBPATH':'printers',
 
+## These setttings will be automatically altered in the settings file
 'MODIFIED-SETTINGS':{ 
-    
-},
+                    'LOGIN_URL':'django.contrib.auth.views.login',
+                    'LOGOUT_URL':'django.contrib.auth.views.logout',
+                    'LOGIN_REDIRECT_URL':'printers.views.manage',
+                    },
+
+# Custom Questions are tuples (key,message,type,default,require,values)
+# See the DjangoInstallSettings class question method for more details
+# these are only related to the settings file
+'CUSTOM_QUESTIONS':[ 
+        ('SERVE_FILES','Do you want to Serve PPD files?',bool,None,True,None),
+        ('HOST_SPARKLE_UPDATES','Will you provide custom builds of PI Client?',bool,None,True,None),
+        ]
+
+'CUSTOM_APACE_CONFIG':{
+# only STATIC_URL is aliased by default, include any others here
+    'ALIAS':['MEDIA_ROOT',''],
+# reletavive to MEDIA_URL, allow uploading files here, but prevent downloading from...
+    'PROTECTED_MEDIA_LOC':['private'],
 }
 
 class VirtualEnvError(Exception):
@@ -96,14 +114,15 @@ class VirtualEnv(object):
             pass     
 
 class DjangoInstallSettings(object):
-    __isosxserver = True if os.path.exists('/Applications/Server.app') else False
+    __isosxserver = True if not os.path.exists('/Applications/Server.app') else False
 
     def __init__(self,project_name,defaults={}): 
-        self.virtualenv_path = None
-
         self.project_name = defaults.get('PROJECT_NAME',project_name)
         self.project_dirname = defaults.get('PROJECT_DIRNAME',project_name)
         self.settings_dirname = defaults.get('SETTINGS_DIRNAME',project_name)
+        
+        self.custom_questions = defaults.get('CUSTOM_QUESTIONS',None)
+        self.modified_settings = defaults.get('MODIFIED-SETTINGS',{})
 
         self.process_user = defaults.get('PROCESS_USER',project_name)
         self.process_group = defaults.get('PROCESS_GROUP',project_name)
@@ -114,15 +133,20 @@ class DjangoInstallSettings(object):
 
         self.run_on_subpath = False
         self.apache_subpath = defaults.get('APACHE_SUBPATH',project_name)
-        self.run_on_osxserver = True
+        self.apache_aliases = []
+        self.apache_protected_locations = []
+        self.apache_custom_config = defaults.get('CUSTOM_APACE_CONFIG',{})
+
+        self.run_on_osxserver = True if self.__isosxserver else False
 
         self.__requirements = defaults.get('REQUIREMENTS',os.path.join('setup','requirements.txt'))
 
         self.git_repo = defaults.get('GIT-REPO',None)
         self.git_branch = defaults.get('GIT-BRANCH','master')
-
         if not self.git_repo:
             raise ValueError
+
+        self.webdata_dir = Util.serveradmin('web','dataLocation') if self.__isosxserver else '/usr/local/www'
 
 
     @property 
@@ -136,6 +160,22 @@ class DjangoInstallSettings(object):
     @property 
     def settings_dir(self):
         return os.path.join(self.project_dir,self.settings_dirname)
+
+    @property 
+    def osx_site_dir(self):
+        return os.path.join(self.webdata_dir,'Sites')
+
+    @property 
+    def osx_webapp_dir(self):
+        return os.path.join(self.webdata_dir,'WebApps')
+
+    @property 
+    def wsgi_file(self):
+        wsgi_file_name = '%s.wsgi' % self.project_name
+        if self.run_on_osxserver:
+            return os.path.join(self.osx_webapp_dir,'WebApps',wsgi_file_name)
+        else:
+            return os.path.join(self.project_dir,wsgi_file_name)
 
     @property 
     def settings_file(self):
@@ -196,10 +236,7 @@ class DjangoInstallSettings(object):
 
 
     def prompt(self):
-        webDataLocal = Util.serveradmin('web','dataLocation') if self.__isosxserver else '/usr/local/www'
-
-        self.virtualenv_path = self.question('Where should we install the Virtual Environment',file,webDataLocal,True)
-        
+        self.virtualenv_path = self.question('Where should we install the Virtual Environment',file,self.webdata_dir+'/Sites',True)
         # self.question('  Confirm install path :%s' % self.virtualenv_path ,bool)
 
         c = Colored
@@ -226,20 +263,27 @@ class DjangoInstallSettings(object):
         #         print "Passwords did not match:"
         #     else:
         #         break
+        for i in self.custom_questions:
+            key,qst,typ,dft,req,val = i
+            resp = self.question(qst,typ,dft,req,val)
+            self.modified_settings[key] = resp
+
+        print self.modified_settings
+
 
 class DjangoAppError(Exception):
     '''Exception to throw if a DjangoApp process fails'''
     pass
 
 class DjangoApp(object):    
-    def __init__(self,virtualenv,app_settings):
+    def __init__(self,virtualenv,install_settings):
         if not isinstance(virtualenv, VirtualEnv):
              raise TypeError("Not a virtual environment")
         
-        if not isinstance(app_settings, DjangoInstallSettings):
+        if not isinstance(install_settings, DjangoInstallSettings):
              raise TypeError("Not a Settings object")
 
-        self.settings = app_settings
+        self.settings = install_settings
         self.virtualenv = virtualenv       
         self.name = self.settings.project_name
         
@@ -273,20 +317,18 @@ class DjangoApp(object):
         except:
             print "Could not download repo"
 
-        print "Requirements file" + self.settings.requirements
-
-        self.virtualenv.install_packages(self.settings.requirements)
+        # self.virtualenv.install_packages(self.settings.requirements)
         self.configure()
 
         # now that everything is installed and configured
         # we should be able to import things
-        from django.core.management import call_command
-        from django.contrib.auth.models import User
+        # from django.core.management import call_command
+        # from django.contrib.auth.models import User
 
-        call_command('syncdb', interactive=False)
-        call_command('migrate')
-        call_command('collectstatic',interactive=False)
-        self.superuser_command()
+        # call_command('syncdb', interactive=False)
+        # call_command('migrate')
+        # call_command('collectstatic',interactive=False)
+        # self.superuser_command()
 
     def superuser_command(self):
         from django.contrib.auth.models import User
@@ -299,11 +341,6 @@ class DjangoApp(object):
     def configure(self):
         '''handle the locating and manipulating of the settings.py file'''
         settings_template = None
-        # print self.media_root
-        # print self.media_url
-        # print self.static_root
-        # print self.static_url
-
         search_for = os.path.join(self.settings.settings_dir,'*settings*.py')
 
         from glob import glob
@@ -318,29 +355,63 @@ class DjangoApp(object):
 
         copyfile(settings_template,self.settings.settings_file)
 
-class FileConfigError(Exception):
-    '''Exception to throw if a FileConfig process fails'''
-    pass
+        if self.settings.run_on_subpath:
+            SP = self.settings.apache_subpath
+            # if not self.settings.modified_settings.get('MEDIA_URL',None):
+            media_url = self.media_url[1:] if self.media_url.startswith('/') else self.media_url
+            self.settings.modified_settings['MEDIA_URL'] = os.path.join('/',SP,media_url,'')
+    
+            # if not self.settings.modified_settings.get('STATIC_URL',None):
+            static_url = self.static_url[1:] if self.static_url.startswith('/') else self.static_url
+            self.settings.modified_settings['STATIC_URL'] = os.path.join('/',SP,static_url,'')
+
+        print self.settings.modified_settings
+        FileConfig(self.settings.settings_file).edit_settings_py(self.settings.modified_settings)
+
+        #TODO: setup apache config settings
+
+
 
 class FileConfig(object):
+    class Error(Exception):
+        '''Exception to throw if a FileConfig process fails'''
+        pass
+
+    from tempfile import NamedTemporaryFile
     '''Write and Configure files'''
     def __init__(self,file):
         self.file = file
         self.__file_array = []
-        self.__file = None
 
-    def setting_replace(self,key, replacement):
-        substr = '%s=%s\n' % (key,replacement)
+    def setting_replace(self,key,replacement):
         for n,i in enumerate(self.__file_array):
-            if i.split('=')[0] == key:
+            DONT_QUOTE=['os',"'",'"']
+            # make sure things that should be quoted are
+            if not type(replacement) is bool:
+                if not replacement[0] in DONT_QUOTE:
+                    replacement = "'%s'" % replacement
+
+            # get this here to preserve spaces/tabs in the file's format
+            key_match = i.split('=')[0]
+            if key == key_match.strip():
+                substr = '%s = %s\n' % (key_match,replacement)
+
+                print 'replacing ' + substr
                 self.__file_array[n] = substr
 
-    def write(self,joint=""):
+    def write(self,joint="",protected_location=False):
         tmp_file_string = joint.join(self.__file_array)
-        with open(self.file,'w') as f:
+        if protected_location:
+            f = NamedTemporaryFile(mode='w+t', delete=False)
             f.write(tmp_file_string)
-
-    def edit_settings(self,settings={}):
+            file_name = f.name
+            f.close()
+            subprocess.call(['sudo','mv','-i',file_name,self.file])
+        else:
+            with open(self.file,'w') as f:
+                f.write(tmp_file_string)
+    
+    def edit_settings_py(self,settings={}):
         # open the file and get it into memory
         with open(self.file,'r') as f:
             for line in f:
@@ -354,6 +425,7 @@ class FileConfig(object):
         self.write("")
 
     def write_wsgi2(self,settings):
+        # The settings is a DjangoInstallSettings object passed in
         self.__file_array = ["",
             "''' WSGI file created using autoinstall script '''",
             "import os, sys",
@@ -374,22 +446,166 @@ class FileConfig(object):
             "",
             ]
 
-        self.write("\n")
+        self.write("\n",protected_location=True)
 
     def write_site_fixture(self,settings):
-        with open(self.file,"wr") as self.__file:
-            pass
+        self.__file_array = []
+        self.write("\n")
 
     def write_apache_conf(self,settings):
-        with open(self.file,"wr") as self.__file:
-            pass
+        # The settings is a DjangoInstallSettings object passed in
+
+        self.__file_array = ['WSGIScriptAlias %s %s' % (settings.wsgi_file),]
+        
+        for i in settings.apache_aliases:
+            alias,path = i
+            self.__file_array.extend(['Alias %s %s' % (alias,path)])
+
+        if not settings.process_user = 'www':
+            self.__file_array.extend([
+                'WSGIDaemonProcess %s user=%s group=%s' %(settings.project_name,settings.process_user,settings.process_group),
+                '<Location /%s>' % settings.apache_subpath,
+                '   WSGIProcessGroup %s' % settings.project_name,
+                '    WSGIApplicationGroup %{GLOBAL}',
+                '    Order deny,allow',
+                '    Allow from all',
+                '</Location>',
+                ])
+        for i in settings.apache_protected_locations
+        self.write("\n",protected_location=True)
+
+    def write_webapp_plist(self,settings):
+        self.__file_array = []
+        self.write("\n",protected_location=True)
 
 
-class UtilError(Exception):
-    '''Exception to throw if util process fails'''
-    pass
+class DSRecord(object):
+    ''' work with Directory Service, add user and groups
+        create an authorized object do
+
+        credentials = DSRecord.credentials('username','password')
+        DSRecord(credentials)
+        user = DSRecord.user('username','uid','password'...)
+        DSRecord.add(user)
+    '''
+    def __init__(self,credentials=None,node='.'):
+        self.credentials = credentials
+        self.node = node
+        self.id_search_start = 1025
+        self.id_search_max = 2000
+        self.__dscl_base = None
+        
+    class Error(Exception):
+        pass
+        
+    class credentials:
+        def __init__(self,admin,password):
+            self.admin=admin
+            self.password=password
+    
+    class user:
+        def __init__(self,name,uid=None,password='*',gid=20,):
+            self.name = name
+            self.uid = uid
+            self.realname = name 
+            self.password = password
+            self.primary_gid = gid
+            self.shell = '/bin/bash'
+            self.home = '/dev/null'
+               
+    class group:
+        def __init__(self,name,gid=None):
+            self.name = name
+            self.gid = gid
+            
+    def system_user_setup(self):
+        self.id_search_start = 400
+        self.id_search_max = 500
+        self.node = '.'
+        
+    def dscl(self,args=[]):
+        __dscl = ['dscl']
+        admin = self.credentials.admin
+        password = self.credentials.password
+        
+        if admin and password:
+            __dscl.extend(['-u',admin,'-P',password])
+        __dscl.extend([self.node])
+        
+        if self.__dscl_base and not args == self.__dscl_base:
+            __dscl.extend(self.__dscl_base)
+        
+        __dscl.extend(args)
+        
+        try:
+            return subprocess.check_output(__dscl)
+        except:
+            raise DSRecord.Error('Problem running the dscl command')
+    
+    def get_valid_id(self,path,key):
+        list_cmd = ['list','/%s' % path ,key]
+        vid = self.id_search_start
+        vids = self.dscl(list_cmd)
+        arr = []
+        for i in vids:
+            x = i.split()
+            if x and len(x) > 1: arr.append(x[1])
+
+        while vid < self.id_search_max:
+            if str(vid) in arr:
+                vid += 1
+            else:
+                return str(vid)
+        return None
+    
+    def add(self,record,update=False):
+        if isinstance(record,DSRecord.user): 
+            import pwd
+            self.__dscl_base = ['create','/Users/%s' % record.name]
+            try:
+                uid = pwd.getpwnam(record.name).pw_uid
+                if not record.uid:record.uid=uid
+                print 'user %s already exists' % record.name
+            except:
+                if not record.uid:record.uid = self.get_valid_id('Users','UniqueID')
+                self.dscl()
+                update = True
+            
+            if update:
+                print 'updating user record...'
+                self.dscl(['RealName',record.name])
+                self.dscl(['UniqueID',str(record.uid)])
+                self.dscl(['passwd',record.password])
+                self.dscl(['UserShell',record.shell]) 
+                self.dscl(['NFSHomeDirectory',record.home])
+                self.dscl(['PrimaryGroupID',str(record.primary_gid)])
+                
+            self.__dscl_base = []
+            
+        elif isinstance(record,DSRecord.group):
+            import grp
+            try:
+                gid = grp.getgrnam(record.name).gr_gid
+                if not record.gid:record.gid=gid
+                print 'group %s already exists' % record.name
+            except:
+                update = True
+                
+            if update:
+                if not record.gid:group.gid = self.get_valid_id('Groups','PrimaryGroupID')
+                grp_cmd = ['dseditgroup','-o','create','-r',record.name,'-i',str(record.gid),'-n','.']
+                admin = self.credentials.admin
+                password = self.credentials.password
+                if admin and password:
+                    grp_cmd.extend(['-u',admin,'-P',password])
+                grp_cmd.extend([name])  
+                subprocess.check_output(grp_cmd)
 
 class Util:
+    class Error(Exception):
+        '''Exception to throw if util process fails'''
+        pass
+
     @classmethod
     def serveradmin(Util,module,value):
         ssad = '/Applications/Server.app/Contents/ServerRoot/usr/sbin/serveradmin'
@@ -405,53 +621,13 @@ class Util:
 
     @classmethod
     def create_process_user_and_group(Util,process_user,process_group):
-        __user_kind = '__user_kind'
-        __group_kind = '__group_kind'
-        def dscl(args):
-            __dscl = ['dscl','.']
-            __dscl.extend(args)
-            return subprocess.check_output(__dscl)
-        def get_valid_id(kind):
-            vid = 400
-            if kind == Util.__user_kind:
-                vids = dscl('list /Groups PrimaryGroupID'.split()).split('\n')
-            else:
-                vids = dscl('list /Groups PrimaryGroupID'.split()).split('\n')
-            arr = []
-            for i in vids:
-                x = i.split()
-                if x: arr.append(x[1])
-
-            while vid < 500:
-                if str(vid) in arr:
-                    vid += 1
-                else:
-                    return vid
-            
-            return None
-
-        def check_if_exists(name,kind):
-            if not kind in [__user_kind,__group_kind]: raise ValueError("incorrect spec")
-            import pwd,grp
-            if kind == Util.__user_kind:
-                cmd = pwd.getpwnam
-            else:
-                cmd = grp.getgrnam
-
-        if not check_if_exists(process_user,Util.__user_kind):
-            uid = get_valid_id(Util.__user_kind)
-
-        def check_if_exists(name,kind):
-            if not kind in [__user_kind,__group_kind]: raise ValueError("incorrect spec")
-            import pwd,grp
-            if kind == __user_kind:
-                cmd = pwd.getpwnam
-            else:
-                cmd = grp.getgrnam
-
-        if check_if_exists(process_user,'user'):
-            uid = get_valid_id('user')
-            # dscl(['-create','/Users/%s'])
+        group = DSRecord.group(process_group)
+        user = DSRecord.user(process_user)
+        record = DSRecord()
+        record.system_user_setup()
+        record.add(group)
+        user.primary_gid = group.gid
+        record.add(user)
 
 class Colored:
     @classmethod
@@ -502,7 +678,8 @@ def main(argv):
     c.echo("##########################################################################",'red')
     
     install_settings.prompt()
-    venv = VirtualEnv(install_settings.virtualenv_path,__defined_settings['PROJECT_NAME'])
+    venv = VirtualEnv(install_settings.virtualenv_path,
+                        __defined_settings['PROJECT_NAME'])
     venv.activate()
     
     app = DjangoApp(venv,install_settings)
@@ -510,6 +687,14 @@ def main(argv):
 
     # FileConfig('/tmp/ex.wsgi').write_wsgi2(install_settings)
     # FileConfig('/tmp/ex.settings.py').edit_settings(install_settings)
-    
+
+@atexit.register
+def goodbye():
+    print "\nExiting the Auto install script."
+
 if __name__ == "__main__":
-    main(sys.argv)
+    try:
+        main(sys.argv)
+    except KeyboardInterrupt:
+        pass
+        

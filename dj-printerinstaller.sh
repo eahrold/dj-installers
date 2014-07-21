@@ -419,7 +419,7 @@ function make_user_and_group {
     fi
 
     if [ "$GROUP_EXISTS" -eq 0 ]; then
-        cecho bold "Creating user ${USER_NAME}..."
+        cecho bold "Creating group ${GROUP_NAME}..."
         GROUP_ID=$(check_ID Groups PrimaryGroupID)
         dseditgroup -o create -i "${GROUP_ID}" -n . "${GROUP_NAME}"
     else

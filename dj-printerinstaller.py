@@ -157,7 +157,7 @@ class DjangoInstallSettings(object):
         self.apache_aliases = []
         self.apache_protected_locations = []
         self.apache_custom_config = defaults.get('CUSTOM_APACE_CONFIG',{})
-
+        self.server_host_name = gethostname()
         self.__requirements = defaults.get('REQUIREMENTS',os.path.join('setup','requirements.txt'))
 
         self.git_repo = defaults.get('GIT-REPO',None)
@@ -241,11 +241,6 @@ class DjangoInstallSettings(object):
 
     def prompt(self):
         while True:
-            self.virtualenv_path = Colored.question('Where should we install the Virtual Environment',type=dir,default=self.apache_sites_dir,require=True)
-            if Colored.question('  Create env at this path, correct? :%s' % self.virtualenv_dir ,bool):
-                break
-
-        while True:
             Colored.echo("[1] www user" "(if you plan to run both non-secure(http) and secure(https))",'purple')
             Colored.echo("[2] create a user %s and group %s" % (self.process_user,self.process_group),'purple')  
             resp = Colored.question('Please Choose',type=int,require=True,values=[1,2])
@@ -267,9 +262,15 @@ class DjangoInstallSettings(object):
                 self.process_group = 'www'
                 break
 
+        while True:
+            self.virtualenv_path = Colored.question('Where should we install the Virtual Environment ',type=dir,default=self.apache_sites_dir,require=True)
+            if Colored.question('  Create env at this path %s ' % self.virtualenv_dir ,type=bool,color='purple'):
+                break
     
         self.run_on_subpath = Colored.question('Would you like to run on the subpath "/%s"' % self.apache_subpath ,bool)
-        
+        self.server_host_name = Colored.question('Enter the FQDN this will run on ',type=str,default=self.server_host_name,require=True)
+        print self.server_host_name
+
         from getpass import getpass
         self.admin_name = Colored.question('Enter the username for the Django superuser',str)
         self.user_email = Colored.question('email address',str)
@@ -281,6 +282,7 @@ class DjangoInstallSettings(object):
                 print "Passwords did not match:"
             else:
                 break
+        
         for i in self.custom_questions:
             key,qst,typ,dft,req,val = i
             resp = Colored.question(qst,typ,dft,req,val)
@@ -884,7 +886,7 @@ class Colored:
         while True:
             prompt = message
             if type == bool:
-                prompt = message + '[ (Y)es/(N)o ]'
+                prompt = message + '[(Y)es/(N)o]'
             elif default:
                 prompt = message + '[%s]'% default
 
@@ -921,12 +923,12 @@ class Colored:
                 except ValueError:
                     self.echo("please choose form these values %s" % values ,'alert')
             else:  # type is string
-                if not ret == '' and require:
-                    break
-                elif default:
+                if default and not ret:
                     ret = default
-                else:
+                if require and not ret:
                     self.echo("There was an empty response",'alert')
+                else:
+                    break
         return ret
 
 

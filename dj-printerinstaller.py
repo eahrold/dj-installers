@@ -126,7 +126,9 @@ class VirtualEnv(object):
                                         self.dir], stdout=subprocess.PIPE)
 
             except subprocess.CalledProcessError:
-                raise VirtualEnv.AccessError("Error: there was a problem elevating priviledges to the location")
+
+                raise VirtualEnv.AccessError(\
+                    "Error: there was a problem elevating priviledges to the location")
                     
     def create(self):
         '''create the env'''
@@ -137,7 +139,9 @@ class VirtualEnv(object):
             except VirtualEnv.Error as _error:
                 raise _error
             except subprocess.CalledProcessError as _error:
-                raise VirtualEnv.Error("There was a problem creating the Virtual Environment, exiting(%d)..." % _error.returncode)
+                raise VirtualEnv.Error(\
+                    "There was a problem creating the Virtual Environment, exiting(%d)..." \
+                        % _error.returncode)
         else:
             print "Environment already exists"
 
@@ -183,8 +187,7 @@ class DjangoInstallSettings(object):
         """Exception raised when required information is not supplied"""
         pass
  
-    _isosxserver = True if os.path.exists('/Applications/Server.app') else False
-    def __init__(self,**defaults): 
+    def __init__(self, **defaults): 
         ''' '''
         try:
             self.project_name = defaults['PROJECT_NAME']
@@ -204,7 +207,9 @@ class DjangoInstallSettings(object):
 
         self.process_user = defaults.get('PROCESS_USER', self.project_name)
         self.process_group = defaults.get('PROCESS_GROUP', self.project_name)
-        self.sslPolicy = 0
+        self.ssl_policy = 0
+
+        self.isosxserver = True if os.path.exists('/Applications/Server.app') else False
 
         self.admin_name = 'admin'
         self.user_email = 'admin@example.com'
@@ -219,7 +224,7 @@ class DjangoInstallSettings(object):
                                      os.path.join('setup', 'requirements.txt'))
 
         self.webdata_dir = serverutil.serveradmin('web', 'dataLocation') \
-                            if self._isosxserver else '/var/www/'
+                            if self.isosxserver else '/var/www/'
 
         self.git_branch = defaults.get('GIT-BRANCH', 'master')
         self.virtualenv_parent_dir = None
@@ -244,7 +249,7 @@ class DjangoInstallSettings(object):
     def apache_sites_dir(self):
         '''apache sites directory'''
         distro = os.uname()[0]
-        if self._isosxserver:            
+        if self.isosxserver:            
             return os.path.join(self.webdata_dir, 'Sites')
         elif distro is 'Darwin':
             return os.path.join('/Library', 'WebServer', '')
@@ -254,7 +259,7 @@ class DjangoInstallSettings(object):
     @property
     def apache_config_dir(self):
         '''apache config file directory'''
-        if self._isosxserver:
+        if self.isosxserver:
             return os.path.join('/', 'Library', 'Server', 'Web', 'Config', 'apache2')
         else:
             return os.path.join('/', 'etc', 'apache2', 'other')
@@ -278,7 +283,7 @@ class DjangoInstallSettings(object):
     def wsgi_file(self):
         '''location of wsgi file'''
         wsgi_file_name = '%s.wsgi' % self.project_name
-        if self._isosxserver:
+        if self.isosxserver:
             return os.path.join(self.webdata_dir, 'WebApps', wsgi_file_name)
         else:
             return os.path.join(self.project_dir, wsgi_file_name)
@@ -327,7 +332,8 @@ class DjangoInstallSettings(object):
             if resp == 2:
                 if not serverutil.create_process_user_and_group(self.process_user, \
                                                                 self.process_group):
-                    if Colored.question('There was a problem creating the user, run as www instead?', type=bool):
+                    if Colored.question(\
+                        'There was a problem creating the user, run as www instead?', type=bool):
 
                         self.process_user = 'www'
                         self.process_group = 'www'
@@ -339,7 +345,7 @@ class DjangoInstallSettings(object):
                         \n[1] to run securly (https), or\n[2] to run on an insecure site(http) ", \
                         'purple')
 
-                    self.sslPolicy = Colored.question('Choice: ', type=int, \
+                    self.ssl_policy = Colored.question('Choice: ', type=int, \
                                                        require=True, values=[1, 2]) is 1 and 1 or 3
                     break 
             else:
@@ -347,15 +353,17 @@ class DjangoInstallSettings(object):
                 self.process_group = 'www'
                 break
 
+        question = 'Where should we install the Virtual Environment '
         while True:
-            self.virtualenv_parent_dir = Colored.question('Where should we install the Virtual Environment ', \
-                                                         type=dir, default=self.apache_sites_dir, require=True)
+            self.virtualenv_parent_dir = Colored.question(question, \
+                                    type=dir, default=self.apache_sites_dir, require=True)
 
-            if Colored.question('Create env at this path %s ' \
+            if Colored.question('Correct Path? %s ' \
               % self.virtualenv_dir, type=bool, color='purple'):
                 break
-    
-        self.run_on_subpath = Colored.question('Would you like to run on the subpath "/%s"' % self.apache_subpath, bool)
+
+        self.run_on_subpath = Colored.question(\
+            'Would you like to run on the subpath "/%s"' % self.apache_subpath, bool)
 
         self.server_host_name = Colored.question('Enter the FQDN this will run on ', \
                                         type=str, default=self.server_host_name, require=True)
@@ -493,7 +501,7 @@ class DjangoApp(object):
                 if not os.path.isdir(os.path.join(dest, '.git')):
                     raise DjangoApp.Error('Not specified location exists and not a git repo')
                 else:
-                    if Colored.question('Repo alredy exists, do a pull new changes?', bool):
+                    if Colored.question('Repo alredy exists, would you like to pull new changes?', bool):
                         command = ['git', 'pull', '--no-edit']
                     else:
                         return  
@@ -616,7 +624,7 @@ class DjangoApp(object):
 
         DjangoConfigFile(self.settings.apache_config_file).write_apache_conf(self.settings)
         DjangoConfigFile(self.settings.wsgi_file).write_wsgi(self.settings)
-        if self.settings._isosxserver:
+        if self.settings.isosxserver:
             DjangoConfigFile(self.settings.osx_webapp_plist_file).write_webapp_plist(self.settings)
 
         return True
@@ -647,7 +655,7 @@ class DjangoApp(object):
                 path, perm = i
                 if os.path.exists(path):
                     subprocess.check_call(chmod_cmd+[str(perm), path])
-        except Exception as _error:
+        except subprocess.CalledProcessError as _error:
             print _error
 
 class DjangoConfigFile(object):
@@ -845,7 +853,7 @@ class DjangoConfigFile(object):
                  'installationIndicatorFilePath':settings.wsgi_file, \
                  'name':settings.osx_webapp_name, \
                  'requiredModuleNames':['wsgi_module',], \
-                 'sslPolicy':settings.sslPolicy, \
+                 'sslPolicy':settings.ssl_policy, \
                 }
 
         plist_string = writePlistToString(plist)

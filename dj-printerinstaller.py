@@ -727,17 +727,24 @@ class DjangoConfigFile(object):
         tmp_file_string = joint.join(self.__file_array)
         try:
             if self.priviledged_location == True:
-                if Colored.question("Write file to priviledged location: %s ? " \
-                                    % self.file, bool, color='red'):
-                    
-                    temp_file = NamedTemporaryFile(mode='w+t')
-                    file_name = temp_file.name
+                file_name = os.path.basename(self.file)
+                if Colored.question("Write file '%s' to priviledged path? " \
+                                    % file_name, bool, color='red'):
+                    print "\n"
+                    try:
+                        temp_file = NamedTemporaryFile(mode='w+t')
+                        file_name = temp_file.name
 
-                    temp_file.write(tmp_file_string)
-                    temp_file.flush()
+                        temp_file.write(tmp_file_string)
+                        temp_file.flush()
 
-                    subprocess.check_call(['sudo', 'mv', '-f', file_name, self.file])
-                    temp_file.close()
+                        subprocess.check_call(['sudo', 'cp', '-f', file_name, self.file])
+                        temp_file.close()
+
+                    except Exception, e:
+                        print e
+
+                   
                     
 
             elif self.priviledged_location == False:
@@ -754,7 +761,7 @@ class DjangoConfigFile(object):
 
     def setting_replace(self, key, replacement):
         '''replace settings'''
-        for n,i in enumerate(self.__file_array):
+        for index, name in enumerate(self.__file_array):
             dont_quote = ['os', 'sys', "'", '"']
             # make sure things that should be quoted, are
             if not type(replacement) in [bool, list, dict, tuple]:
@@ -762,10 +769,10 @@ class DjangoConfigFile(object):
                     replacement = "'%s'" % replacement
 
             # get this here to preserve indentation
-            key_match = i.split('=')[0]
+            key_match = name.split('=')[0]
             if key == key_match.strip():
                 substr = '%s = %s\n' % (key_match, replacement)
-                self.__file_array[n] = substr
+                self.__file_array[index] = substr
     
     
     def edit_settings_py(self, settings_dict=dict):
@@ -783,31 +790,34 @@ class DjangoConfigFile(object):
         self.write("")
 
     def write_wsgi(self, settings):
-        # The settings is a DjangoInstallSettings object passed in
-        self.__file_array = ["",
-            "''' WSGI file created using autoinstall script '''",
-            "import os, sys",
-            "import site",
-            "",
-            "VIR_ENV_DIR = '%s'" % settings.virtualenv_dir,
-            "",
-            "# Use site to load the site-packages directory of our virtualenv",
-            "site.addsitedir(os.path.join(VIR_ENV_DIR, 'lib/python2.7/site-packages'))",
-            "",
-            "# Make sure we have the virtualenv and the Django app itself added to our path",
-            "sys.path.append(VIR_ENV_DIR)",
-            "sys.path.append(os.path.join(VIR_ENV_DIR, '%s'))" % settings.project_dirname,
-            "",
-            "os.environ.setdefault('DJANGO_SETTINGS_MODULE', '%s.settings')" % settings.settings_dirname,
-            "import django.core.handlers.wsgi",
-            "application = django.core.handlers.wsgi.WSGIHandler()",
-            "",
+        '''write the wsgi file .The settings passed in is a 
+        DjangoInstallSettings object'''
+
+        self.__file_array = [ \
+            "", \
+            "''' WSGI file created using autoinstall script '''", \
+            "import os, sys", \
+            "import site", \
+            "", \
+            "VIR_ENV_DIR = '%s'" % settings.virtualenv_dir, \
+            "", \
+            "# Use site to load the site-packages directory of our virtualenv", \
+            "site.addsitedir(os.path.join(VIR_ENV_DIR, 'lib/python2.7/site-packages'))", \
+            "", \
+            "# Make sure we have the virtualenv and the Django app itself added to our path", \
+            "sys.path.append(VIR_ENV_DIR)", \
+            "sys.path.append(os.path.join(VIR_ENV_DIR, '%s'))" % settings.project_dirname, \
+            "", \
+            "os.environ.setdefault('DJANGO_SETTINGS_MODULE', '%s.settings')" % settings.settings_dirname, \
+            "import django.core.handlers.wsgi", \
+            "application = django.core.handlers.wsgi.WSGIHandler()", \
+            "", \
             ]
 
         self.write("\n")
 
     def write_site_fixture(self, settings):
-        '''Write site fixture dynamically 
+        '''TODO: Write site fixture dynamically 
         from user initial user input'''
         self.__file_array = []
         self.write("\n")

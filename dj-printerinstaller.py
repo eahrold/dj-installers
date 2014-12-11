@@ -16,7 +16,7 @@ from plistlib import writePlistToString
 from tempfile import NamedTemporaryFile
 
 
-settings = {
+global_settings = {
 'PROJECT_NAME':'printerinstaller',
 'PROJECT_DESCRIPTION':'Printer-Installer Server',
 
@@ -115,8 +115,8 @@ class VirtualEnv(object):
         # check if there is write access to the parent directoy, 
         if not os.access(self.dir, os.W_OK):
             try:
-                Colored.question('Trying to install virtualenv in \
-                                  priviledged location, continue?', type=bool)
+                queston = 'Trying to install virtualenv in priviledged location, continue?'
+                Colored.question(queston, type=bool)
 
                 # make the directory, then set the ownership to the current user
                 if not os.path.exists(self.dir):
@@ -126,8 +126,7 @@ class VirtualEnv(object):
                                         self.dir], stdout=subprocess.PIPE)
 
             except subprocess.CalledProcessError:
-                raise VirtualEnv.AccessError("Error: there was a problem elevating\
-                                              priviledges to the location")
+                raise VirtualEnv.AccessError("Error: there was a problem elevating priviledges to the location")
                     
     def create(self):
         '''create the env'''
@@ -138,8 +137,7 @@ class VirtualEnv(object):
             except VirtualEnv.Error as _error:
                 raise _error
             except subprocess.CalledProcessError as _error:
-                raise VirtualEnv.Error("There was a problem creating the Virtual \
-                                        Environment, exiting(%d)..." % _error.returncode)
+                raise VirtualEnv.Error("There was a problem creating the Virtual Environment, exiting(%d)..." % _error.returncode)
         else:
             print "Environment already exists"
 
@@ -319,8 +317,7 @@ class DjangoInstallSettings(object):
     def prompt(self):
         '''prompt'''
         while True:
-            Colored.echo("[1] www user" "(if you plan to run both \
-                          non-secure(http) and secure(https))", 'purple')
+            Colored.echo("[1] www user" "(if you plan to run both non-secure(http) and secure(https))", 'purple')
 
             Colored.echo("[2] create a user %s and group %s" % \
                         (self.process_user, self.process_group), 'purple')
@@ -330,8 +327,7 @@ class DjangoInstallSettings(object):
             if resp == 2:
                 if not serverutil.create_process_user_and_group(self.process_user, \
                                                                 self.process_group):
-                    if Colored.question('There was a problem creating the user, \
-                                         run as www instead?', type=bool):
+                    if Colored.question('There was a problem creating the user, run as www instead?', type=bool):
 
                         self.process_user = 'www'
                         self.process_group = 'www'
@@ -352,15 +348,14 @@ class DjangoInstallSettings(object):
                 break
 
         while True:
-            self.virtualenv_parent_dir = Colored.question('Where should we install the \
-                    Virtual Environment ', type=dir, default=self.apache_sites_dir, require=True)
+            self.virtualenv_parent_dir = Colored.question('Where should we install the Virtual Environment ', \
+                                                         type=dir, default=self.apache_sites_dir, require=True)
 
-            if Colored.question('  Create env at this path %s ' \
+            if Colored.question('Create env at this path %s ' \
               % self.virtualenv_dir, type=bool, color='purple'):
                 break
     
-        self.run_on_subpath = Colored.question('Would you like to run on\
-                                                the subpath "/%s"' % self.apache_subpath, bool)
+        self.run_on_subpath = Colored.question('Would you like to run on the subpath "/%s"' % self.apache_subpath, bool)
 
         self.server_host_name = Colored.question('Enter the FQDN this will run on ', \
                                         type=str, default=self.server_host_name, require=True)
@@ -626,7 +621,7 @@ class DjangoApp(object):
 
         return True
 
-    def set_permissions(self,**kwargs):
+    def set_permissions(self, **kwargs):
         '''set permission'''
         user = kwargs.get('user', self.settings.process_user)
         group = kwargs.get('group', self.settings.process_group)
@@ -719,22 +714,27 @@ class DjangoConfigFile(object):
             return False if os.access(os.path.dirname(self.file), os.W_OK) else True
 
     def write(self, joint=""):
-        from tempfile import NamedTemporaryFile
+        '''write to file'''
 
         tmp_file_string = joint.join(self.__file_array)
         try:
             if self.priviledged_location == True:
-                if Colored.question("Write file to priviledged location: \
-                                    %s ? " %self.file, bool, color='red'):
+                if Colored.question("Write file to priviledged location: %s ? " \
+                                    % self.file, bool, color='red'):
+                    
                     temp_file = NamedTemporaryFile(mode='w+t')
+                    file_name = temp_file.name
+
                     temp_file.write(tmp_file_string)
-                    tmp_file = temp_file.name
                     temp_file.flush()
-                    subprocess.check_call(['sudo', 'mv', '-f', tmp_file, self.file])
+
+                    subprocess.check_call(['sudo', 'mv', '-f', file_name, self.file])
                     temp_file.close()
+                    
+
             elif self.priviledged_location == False:
-                with open(self.file, 'w') as f:
-                    f.write(tmp_file_string)
+                with open(self.file, 'w') as _file:
+                    _file.write(tmp_file_string)
         except subprocess.CalledProcessError:
             raise DjangoConfigFile.PriviledgedProcessError('Error writing to priviledged location')
         
@@ -747,7 +747,7 @@ class DjangoConfigFile(object):
     def setting_replace(self, key, replacement):
         '''replace settings'''
         for n,i in enumerate(self.__file_array):
-            dont_quote=['os', 'sys', "'", '"']
+            dont_quote = ['os', 'sys', "'", '"']
             # make sure things that should be quoted, are
             if not type(replacement) in [bool, list, dict, tuple]:
                 if not replacement[0] in dont_quote:
@@ -760,15 +760,15 @@ class DjangoConfigFile(object):
                 self.__file_array[n] = substr
     
     
-    def edit_settings_py(self, settings=dict):
+    def edit_settings_py(self, settings_dict=dict):
         '''edit settings'''
         # open the file and get it into memory
-        with open(self.file, 'r') as f:
-            for line in f:
+        with open(self.file, 'r') as _file:
+            for line in _file:
                 self.__file_array.append(line)
 
         # modify all the settings you wish to here
-        for key, value in settings.iteritems():
+        for key, value in settings_dict.iteritems():
             self.setting_replace(key, value)
 
         # finish up and write out to the file
@@ -799,15 +799,20 @@ class DjangoConfigFile(object):
         self.write("\n")
 
     def write_site_fixture(self, settings):
+        '''Write site fixture dynamically 
+        from user initial user input'''
         self.__file_array = []
         self.write("\n")
 
     def write_apache_conf(self, settings):
+        '''write apache config file for webapp'''
         # The settings is a DjangoInstallSettings object passed in
 
-        self.__file_array = ['WSGIScriptAlias /%s %s' % (settings.apache_subpath, settings.wsgi_file)]
-        for i in settings.apache_aliases:
-            alias,path = i
+        self.__file_array = ['WSGIScriptAlias /%s %s' % \
+                            (settings.apache_subpath, settings.wsgi_file)]
+
+        for item in settings.apache_aliases:
+            alias, path = item
             self.__file_array.append('Alias %s %s' % (alias, path))
 
         if not settings.process_user is 'www':
@@ -832,21 +837,20 @@ class DjangoConfigFile(object):
         self.write("\n")
 
     def write_webapp_plist(self, settings):
-        name = os.path.splitext(os.path.basename(settings.osx_webapp_plist_file))[:1][0]        
-        plist={
-        'displayName':settings.project_description,
-        'includeFiles':[settings.apache_config_file],
-        'installationIndicatorFilePath':settings.wsgi_file,
-        'name':settings.osx_webapp_name,
-        'requiredModuleNames':['wsgi_module',],
-        'sslPolicy':settings.sslPolicy,
-        }
+        '''write webapp plist to file'''
+
+        # name = os.path.splitext(os.path.basename(settings.osx_webapp_plist_file))[:1][0]
+        plist = {'displayName':settings.project_description, \
+                 'includeFiles':[settings.apache_config_file], \
+                 'installationIndicatorFilePath':settings.wsgi_file, \
+                 'name':settings.osx_webapp_name, \
+                 'requiredModuleNames':['wsgi_module',], \
+                 'sslPolicy':settings.sslPolicy, \
+                }
 
         plist_string = writePlistToString(plist)
         self.__file_array.append(plist_string)
         self.write("")
-
-
 
 class DSRecord(object):
     ''' work with Directory Service, add user and groups
@@ -861,20 +865,22 @@ class DSRecord(object):
         '''Exception to throw if DSRecord process fails'''
         pass
 
-    def __init__(self,credentials=None,node='.'):
+    def __init__(self, credentials=None, node='.'):
         self.credentials = credentials
         self.node = node
         self.id_search_start = 1025
         self.id_search_max = 2000
-        self.__dscl_base = None
+        self.__dscl_base = []
                 
     class credentials:
-        def __init__(self,admin=None,password=None):
-            self.admin=admin
-            self.password=password
+        '''Credentials Object'''
+        def __init__(self, admin=None, password=None):
+            self.admin = admin
+            self.password = password
     
     class user:
-        def __init__(self,name,uid=None,password='*',gid=20,shell='/bin/bash',home='/dev/null'):
+        '''User Object'''
+        def __init__(self, name, uid=None, password='*', gid=20, shell='/bin/bash', home='/dev/null'):
             self.name = name
             self.uid = uid
             self.realname = name 
@@ -884,56 +890,73 @@ class DSRecord(object):
             self.home = home
                
     class group:
-        def __init__(self,name,gid=None):
+        '''Group object'''
+        def __init__(self, name, gid=None):
             self.name = name
             self.gid = gid
     
-    def ldap_user_setup(self,host):
-        self.node = os.path.join('/LDAPv3/',host)
+    def ldap_user_setup(self, host):
+        '''constructs not for LDAPv3 domain'''
+        self.node = os.path.join('/LDAPv3/', host)
 
     def system_user_setup(self):
+        '''Constructs node for local domain'''
         self.id_search_start = 400
         self.id_search_max = 500
         self.node = '.'
         
     def dscl(self,args=[]):
+        '''wrapper for the directory service command line'''
         __dscl = ['dscl']
-        
+
         if self.credentials and self.credentials.admin and self.credentials.password:
-            __dscl.extend(['-u',admin,'-P',password])
+            __dscl.extend(['-u', self.credentials.admin, '-P', self.credentials.password])
+
         elif 'create' in self.__dscl_base or 'create' in args:
-            __dscl.insert(0,'sudo')
+            __dscl.insert(0, 'sudo')
         
+
         __dscl.extend([self.node]) 
         if self.__dscl_base and not args == self.__dscl_base:
             __dscl.extend(self.__dscl_base)
         
         __dscl.extend(args)
-        
+
         try:
-            return subprocess.check_output(__dscl)
-        except:
-            raise
+            output =  subprocess.check_output(__dscl)
+            return output
+        except subprocess.CalledProcessError as _error:
+            print "Problem executing the DSCL command"
+            raise DSRecord.Error(_error)
     
-    def get_valid_id(self,path,key):
-        list_cmd = ['list','/%s' % path ,key]
+    def get_valid_id(self, path, key):
+        '''gets the next avaliable ID number
+        for a given type of dscl object'''
+
+        list_cmd = ['list', '/%s' % path, key]
+
         vid = self.id_search_start
         vids = self.dscl(list_cmd)
+
         arr = []
-        for i in vids:
-            x = i.split()
-            if x and len(x) > 1: arr.append(x[1])
+        for item in vids:
+            item_arr = item.split()
+            if item_arr and len(item_arr) > 1:
+                arr.append(item_arr[1])
 
         while vid < self.id_search_max:
             if str(vid) in arr:
                 vid += 1
             else:
                 return str(vid)
+
+        # if we make it here something is wrong
         raise DSRecord.Error('could not a valid unique id in range')
     
-    def add(self,record,update=False):
+    def add(self, record, update=False):
+        '''Add a dscl record object'''
         try:
-            if isinstance(record,DSRecord.user): 
+            if isinstance(record, DSRecord.user): 
                 import pwd
                 self.__dscl_base = ['create', '/Users/%s' % record.name]
                 try:
@@ -941,7 +964,7 @@ class DSRecord(object):
                     uid = pwd.getpwnam(record.name).pw_uid
                     record.uid = record.uid or uid
                     print 'User "%s" already exists' % record.name
-                except:
+                except Exception:
                     print 'Creating user "%s"' % record.name
                     record.uid = record.uid or self.get_valid_id('Users', 'UniqueID')
                     self.dscl()
@@ -964,21 +987,30 @@ class DSRecord(object):
                     gid = grp.getgrnam(record.name).gr_gid
                     record.gid = record.gid or gid
                     print 'group "%s" already exists' % record.name
-                except:
+                except Exception:
                     update = True
                     
                 if update:
                     err_msg = 'There was a problem updating the "%s" group record' % record.name
+
                     if not record.gid:
-                        DSRecord.group.gid = self.get_valid_id('Groups', 'PrimaryGroupID')
-                    grp_cmd = ['dseditgroup', '-o', 'create', '-r', \
+                        record.gid = self.get_valid_id('Groups', 'PrimaryGroupID')
+
+                    grp_cmd = ['sudo','dseditgroup', '-o', 'create', '-r', \
                                 record.name, '-i', str(record.gid), '-n', '.']
-                    admin = self.credentials.admin
-                    password = self.credentials.password
+
+                    admin = None
+                    password = None
+                    if self.credentials:
+                        admin = self.credentials.admin
+                        password = self.credentials.password
+                       
                     if admin and password:
                         grp_cmd.extend(['-u', admin, '-P', password])
-                    grp_cmd.extend('name')  
+                    
+                    grp_cmd.append(record.name)
                     subprocess.check_output(grp_cmd)
+
             
             print ' Successfully added record' if update else '  skipping...'
 
@@ -990,23 +1022,30 @@ class DSRecord(object):
             self.__dscl_base = []
 
 class pgsql:
+    '''Not implemented yet'''
     class Error(Exception):
         pass
-    def create_db_and_owner(dbname,dbowner,dbowner_pass):
+    def create_db_and_owner(self, dbname, dbowner, dbowner_pass):
+        '''create a database and password'''
+
         __psql_base = ['sudo', 'psql', '--username=_postgres', '-d', 'postgres', '-c']
         createuser = ['sudo', 'createuser','--username=_postgres',dbowner]
         createdb = ['sudo', 'createdb', '--username=_postgres', '-O',dbname]
         setpsswd = ['sudo', 'psql', '--username=_postgres', '-d', 'postgres', '-c', "alter user %s with password '%s';" %(dbowner,dbowner_pass)]
-        # psql -U _postgres template1 -c "CREATE USER eldon WITH password 'opensaysme';"
-        # CREATE DATABASE mydb WITH OWNER ramesh;
+        # psql -U _postgres template1 -c "CREATE USER my_user_name WITH password 'opensaysme';"
+        # CREATE DATABASE mydb WITH OWNER my_user_name;
 
 class serverutil:
     class Error(Exception):
         '''Exception to throw if serverutil process fails'''
         pass
 
+    def __init__(self):
+        pass
+
     @classmethod
     def webappctl(cls, webapp, command='restart', vhost=None):
+        '''Wrapper for the webappctl command line utility'''
         wac = '/Applications/Server.app/Contents/ServerRoot/usr/sbin/webappctl'
         try:
             webapp_cmd = ['sudo', wac, command, webapp,]
@@ -1018,36 +1057,45 @@ class serverutil:
             raise serverutil.Error('Could not start webapp')
 
     @classmethod
-    def serveradmin(cls,module,value):
+    def serveradmin(cls, module, value):
+        '''Wrapper for the serveradmin comand line utility'''
         ssad = '/Applications/Server.app/Contents/ServerRoot/usr/sbin/serveradmin'
         default_path = '/Library/Server/Web/Data'
         try:
-            ssad_command = ['sudo',ssad,'settings',':'.join([module,value])]
+            ssad_command = ['sudo', ssad, 'settings', ':'.join([module, value])]
             results = subprocess.check_output(ssad_command)    
             string = results.split('=')[1].strip().strip('\"')
             if not string in ('_empty_dictionary',):
                 return string
-        except Exception, e:
+        except Exception:
             pass
         return default_path
 
     @classmethod
-    def create_process_user_and_group(cls,process_user,process_group):
+    def create_process_user_and_group(cls, process_user, process_group):
+        '''Try to create the process user for the django webapp'''
         try:
             user = DSRecord.user(process_user)
             group = DSRecord.group(process_group)
             record = DSRecord()
             record.system_user_setup()
             record.add(group)
+            print "added group"
             user.primary_gid = group.gid
             record.add(user)
+            print "added user"
             return True
-        except Exception as e:
-            return False
+        except Exception as _error:
+            raise _error
 
 class Colored:
+    '''Simple class to print colored text to terminal'''
+    def __init__(self):
+        pass
+
     @classmethod
-    def ansii_color_str(cls,message,color=None):
+    def ansii_color_str(cls, message, color=None):
+        '''create colored string from keywords'''
         if color in ('red', 'alert'):
             c_val = '31'
         elif color in ('green', 'attention'):
@@ -1073,7 +1121,7 @@ class Colored:
     @classmethod
     def read(cls, message, color=None, type=str):
         '''read user input'''
-        string = raw_input(Colored.ansii_color_str(message, color));
+        string = raw_input(Colored.ansii_color_str(message, color))
         if type is bool:
             if string in ('Y', 'y', 'Yes', 'yes', 'YES'):
                 return True
@@ -1138,7 +1186,7 @@ class Colored:
         return ret
 
 def which(exe):
-    '''find executable from installed path'''
+    '''find executable from user's PATH environment'''
     def is_executable(exe_path):
         '''Is exe_path executable?'''
         return os.path.exists(exe_path) and os.access(exe_path, os.X_OK)
@@ -1153,7 +1201,7 @@ def which(exe):
 
 
 
-def main(*argv,**kwargs):
+def main(*argv, **kwargs):
     def complete(text, state):
         '''call when complete'''
         return (glob.glob(text+'*')+[None])[state]
@@ -1164,14 +1212,14 @@ def main(*argv,**kwargs):
         return getpwuid(os.stat(filename).st_uid).pw_name
 
     def terminal_size():
-        '''try and set the terminal size'''
+        '''Get the current terminal width and height'''
         import fcntl, termios, struct
 
-        fd = os.open(os.ctermid(), os.O_RDONLY)
-        cr = struct.unpack('hh', \
+        # fd = os.open(os.ctermid(), os.O_RDONLY)
+        current_resolution = struct.unpack('hh', \
             fcntl.ioctl(0, termios.TIOCGWINSZ, '1234'))
         
-        return int(cr[1]), int(cr[0])
+        return int(current_resolution[1]), int(current_resolution[0])
 
     def setup_tab_complete():
         '''enable path tab completion'''
@@ -1221,7 +1269,7 @@ def main(*argv,**kwargs):
             try:
                 print "Temporairly setting owner to %s" % current_user
                 subprocess.check_call(['sudo', 'chown', '-R', current_user, env_path])
-            except Exception as _error:
+            except subprocess.CalledProcessError as _error:
                 print "ERROR: Could not set owner"
 
         venv = VirtualEnv(env_path)
@@ -1246,7 +1294,7 @@ def main(*argv,**kwargs):
 
 if __name__ == "__main__":       
     try:
-        main(*sys.argv,**settings)
+        main(*sys.argv, **global_settings)
     except KeyboardInterrupt:
         print "\nCanceling the Auto install script."
         

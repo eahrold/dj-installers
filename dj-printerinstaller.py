@@ -202,7 +202,7 @@ class DjangoInstallSettings(object):
         self.project_dirname = defaults.get('PROJECT_DIRNAME', self.project_name)
         self.settings_dirname = defaults.get('SETTINGS_DIRNAME', self.project_name)
         
-        self.custom_questions = defaults.get('CUSTOM_QUESTIONS', None)
+        self.custom_questions = defaults.get('CUSTOM_QUESTIONS')
         self.modified_settings = defaults.get('MODIFIED-SETTINGS', {})
 
         self.process_user = defaults.get('PROCESS_USER', self.project_name)
@@ -454,7 +454,7 @@ class DjangoApp(object):
                     rm_cmd = ['sudo', 'rm', self.settings_py +'c']
                     subprocess.check_call(rm_cmd)
             except (OSError, subprocess.CalledProcessError):
-                print "there was a problem purging the compiled settings file"
+                print "There was a problem purging the compiled settings file"
 
         try:
             _settings = subprocess.check_output([self.virtualenv.python, \
@@ -486,7 +486,7 @@ class DjangoApp(object):
                 return _setting.split('=')[1].strip('\'"# ')
 
 
-    def download_get_repo(self):
+    def download_git_repo(self):
         '''download repo'''
         try:
             git = which('git')
@@ -499,7 +499,7 @@ class DjangoApp(object):
             # probably should attempt a git pull
                 # check to see if this is really a git repo first
                 if not os.path.isdir(os.path.join(dest, '.git')):
-                    raise DjangoApp.Error('Not specified location exists and not a git repo')
+                    raise DjangoApp.Error('Specified location exists and is not a git repo')
                 else:
                     if Colored.question('Repo alredy exists, would you like to pull new changes?', bool):
                         command = ['git', 'pull', '--no-edit']
@@ -511,37 +511,54 @@ class DjangoApp(object):
                 command = [git, 'clone', '-b', branch, repo, dest] 
             subprocess.check_call(command, cwd=git_dest)
         except Exception:
-            raise DjangoApp.Error('Not specified location exists and not a git repo')
+            raise DjangoApp.Error('Specified location exists and is not a git repo')
 
 
     def install(self):
         '''Install webapp'''
         self.virtualenv.create()
-        self.download_get_repo()
+        self.download_git_repo()
 
-        self.virtualenv.install_packages(self.settings.requirements)
-        self.configure_django_settings()
-
+        try:
+            self.virtualenv.install_packages(self.settings.requirements)
+            self.configure_django_settings()
+        except:
+            raise
+       
         # now that everything is installed and configured
         # we should be able to import our django modules
 
         sys.path.extend([self.settings.project_dir, self.settings.settings_dir])
         os.environ.setdefault('DJANGO_SETTINGS_MODULE', '%s.settings' % self.name)
 
-        from django.core.management import call_command
-        from django.contrib.sites.models import Site
-        from django.contrib.auth.models import User
+        try:
+            from django.core.management import call_command
+            from django.contrib.sites.models import Site
+            from django.contrib.auth.models import User
+            
+            import django
+            django.setup()
+            
+            print "config done"
 
-        call_command('syncdb', interactive=False, load_initial_data=False, verbosity=0)
-        call_command('migrate', verbosity=0)
-        call_command('collectstatic', interactive=False, verbosity=0)
+            call_command('syncdb', interactive=False, load_initial_data=False, verbosity=0)
+            call_command('migrate', verbosity=0)
+            call_command('collectstatic', interactive=False, verbosity=0)
+        except ImportError as e:
+            print 'couldn not import %s' % e
+        except Exception as e:
+            print "Erro %s" % e
+            raise
+
+        print "config done"
 
         # set up the site based on supplied hostname
         try:
             Site.objects.create(domain=self.settings.server_host_name, \
                                 name=self.settings.server_host_name)
         except Exception:
-            print "an error occured while creating the site"
+            print "A non-critical error occured while creating the site,\
+                you may need to do this manually using the Admin portal"
 
         # create a superuser
         try:
@@ -558,6 +575,7 @@ class DjangoApp(object):
     def configure_django_settings(self):
         '''handle the locating and manipulating of the settings.py file'''
         from django.utils.crypto import get_random_string
+        import time
 
         settings_template = None
         search_for = os.path.join(self.settings.settings_dir, '*settings*.py')
@@ -572,11 +590,13 @@ class DjangoApp(object):
 
         DjangoConfigFile.copy(settings_template, self.settings.settings_file)
         
-        import time
+        # Sleep for a second to be sure the file gets copied, just to be safe.
         time.sleep(1)
 
+        # Generate a new secret key
         chars = 'abcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*(-_=+)'
         self.settings.modified_settings['SECRET_KEY'] = get_random_string(50, chars)
+        
         self.settings.modified_settings['ALLOWED_HOSTS'] = ['%s' % self.settings.server_host_name]
 
         if self.settings.run_on_subpath:
@@ -594,6 +614,7 @@ class DjangoApp(object):
                                 os.path.join('/', sup_path, static_url, '')
 
         DjangoConfigFile(self.settings.settings_file).edit_settings_py(self.settings.modified_settings)
+
         # now that the modifications have been done, update the internal values
         self.refresh_dj_settings()
 
@@ -760,7 +781,8 @@ class DjangoConfigFile(object):
             raise DjangoConfigFile.WriteError('Error writing the file')
 
     def setting_replace(self, key, replacement):
-        '''replace settings'''
+        '''replace settings in the actual settings.py file
+        the __file_array is a store for line of the file'''
         for index, name in enumerate(self.__file_array):
             dont_quote = ['os', 'sys', "'", '"']
             # make sure things that should be quoted, are
@@ -776,7 +798,8 @@ class DjangoConfigFile(object):
     
     
     def edit_settings_py(self, settings_dict=dict):
-        '''edit settings'''
+        '''write the settings.py file with the changed 
+        values stored in the __file_array'''
         # open the file and get it into memory
         with open(self.file, 'r') as _file:
             for line in _file:
@@ -809,9 +832,13 @@ class DjangoConfigFile(object):
             "sys.path.append(os.path.join(VIR_ENV_DIR, '%s'))" % settings.project_dirname, \
             "", \
             "os.environ.setdefault('DJANGO_SETTINGS_MODULE', '%s.settings')" % settings.settings_dirname, \
-            "import django.core.handlers.wsgi", \
-            "application = django.core.handlers.wsgi.WSGIHandler()", \
-            "", \
+            "",\
+            "from django.core.handlers.wsgi import WSGIHandler",\
+            "application = WSGIHandler()",\
+            "",\
+            "from django.core.wsgi import get_wsgi_application",\
+            "module=get_wsgi_application()",\
+            "",\
             ]
 
         self.write("\n")
@@ -827,7 +854,8 @@ class DjangoConfigFile(object):
         # The settings is a DjangoInstallSettings object passed in
 
         self.__file_array = ['WSGIScriptAlias /%s %s' % \
-                            (settings.apache_subpath, settings.wsgi_file)]
+                            (settings.apache_subpath if settings.run_on_subpath else '',
+                             settings.wsgi_file)]
 
         for item in settings.apache_aliases:
             alias, path = item
@@ -857,7 +885,6 @@ class DjangoConfigFile(object):
     def write_webapp_plist(self, settings):
         '''write webapp plist to file'''
 
-        # name = os.path.splitext(os.path.basename(settings.osx_webapp_plist_file))[:1][0]
         plist = {'displayName':settings.project_description, \
                  'includeFiles':[settings.apache_config_file], \
                  'installationIndicatorFilePath':settings.wsgi_file, \
@@ -1039,17 +1066,42 @@ class DSRecord(object):
         finally:
             self.__dscl_base = []
 
-class pgsql:
+class PostgresAdmin:
     '''Not implemented yet'''
     class Error(Exception):
         pass
+
+    def __init__(self, **kwargs):
+        self.user = kwargs.get('admin', '_postgres')
+        self.password = kwargs.get('password')
+
+    def exec_command(self, command_args):
+        pass
+    
+    def createuser(self):
+        '''creat new user'''
+        createuser = ['sudo', 'createuser','--username=_postgres', self.dbowner]
+        self.exec_command(createuser)
+
+    def createdb(self):
+        '''create new database'''
+        createdb = ['sudo', 'createdb', '--username=_postgres', '-O', self.dbname]
+        self.exec_command(createdb)
+
+
+    def setpasswd(self):
+        '''set password'''
+        setpsswd = ['sudo', 'psql', '--username=_postgres', '-d', 'postgres', '-c', "alter user %s with password '%s';" %(dbowner, dbowner_pass)]
+        self.exec_command(setpsswd)
+
+
     def create_db_and_owner(self, dbname, dbowner, dbowner_pass):
         '''create a database and password'''
 
         __psql_base = ['sudo', 'psql', '--username=_postgres', '-d', 'postgres', '-c']
-        createuser = ['sudo', 'createuser','--username=_postgres',dbowner]
-        createdb = ['sudo', 'createdb', '--username=_postgres', '-O',dbname]
-        setpsswd = ['sudo', 'psql', '--username=_postgres', '-d', 'postgres', '-c', "alter user %s with password '%s';" %(dbowner,dbowner_pass)]
+        # self.createuser()
+        # self createdb()
+        # self.setpsswd()
         # psql -U _postgres template1 -c "CREATE USER my_user_name WITH password 'opensaysme';"
         # CREATE DATABASE mydb WITH OWNER my_user_name;
 
@@ -1310,9 +1362,10 @@ def main(*argv, **kwargs):
             subprocess.call(['sudo', 'chown', '-R', original_project_owner, env_path])
 
 
-if __name__ == "__main__":       
+if __name__ == "__main__": 
+    kwargs = global_settings
     try:
-        main(*sys.argv, **global_settings)
+        main(*sys.argv, **kwargs)
     except KeyboardInterrupt:
         print "\nCanceling the Auto install script."
         
